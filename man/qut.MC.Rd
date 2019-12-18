@@ -6,7 +6,8 @@
 \usage{
 qut.MC(X, q = nrow(X), M = 30, alpha = NULL, sigma = NULL,
   intercept = TRUE, standardizeX = TRUE, standardizeG = NULL,
-  MCrep = 100, GEVapprox = TRUE, parallel = FALSE)
+  MCrep = 100, GEVapprox = TRUE, parallel = FALSE,
+  var.subset = 1:ncol(X))
 }
 \arguments{
 \item{X}{input matrix of dimension \code{n x p}, previously mean-centered and
@@ -47,13 +48,20 @@ sample. Default if \code{TRUE}.}
 \item{parallel}{if \code{TRUE}, use parallel \code{foreach} to perform the
 Monte Carlo simulation. Must register parallel beforehand, e.g. with
 \code{doParallel}. Default is \code{FALSE}.}
+
+\item{var.subset}{subset of variables for which QUT is computed (i.e. we will
+compute the parameter value for which P(betahat[var.subset]) = 0) = 1-alpha
+when beta = 0.}
 }
 \value{
 An object of class \code{"qut.MC"}, which is a list with the
   following components: \item{allMC}{all \code{MCrep} realizations of the
   null thresholding statistic of interest (pivotized if \code{sigma =
   NULL}).} \item{GEVpar}{MLE estimates of the GEV distribution parameters
-  (\code{NULL} if \code{GEVapprox} was set to \code{FALSE}).}
+  (\code{NULL} if \code{GEVapprox} was set to \code{FALSE}).} \item{GEVfit}{
+  set to NULL is GEVapprox is FALSE. If GEVapprox is TRUE, GEVfit is 
+  either the result of the gev.fit function, or the character string "error" 
+  if gev.fit produced an error.}
   \item{upperQuant}{upper alpha-quantile of the null thresholding statistis
   (either the empirical quantile, or the quantile of the fitted GEV
   distribution).} \item{call}{matched call.} \item{lass0settings}{a list

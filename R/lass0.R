@@ -65,7 +65,11 @@
 #'   deviations of all columns of \code{X}. Can be used to transform
 #'   \code{Betas} to the original scale doing \code{Betas / sdsX}.}
 #'   \item{qut.MC.output}{either the list returned by \code{qut.MC}, or a character string
-#'   explaining why \code{qut.MC} was not called.} \item{call}{matched call.}
+#'   explaining why \code{qut.MC} was not called.} \item{quant.type}{if tau is NULL, 
+#'   indicates the type of quantile used: "GEV" or "empirical" 
+#'   (even when GEVapprox = TRUE, the empirical quantile is used when gev.fit 
+#'   returns an error)} 
+#'   \item{call}{matched call.}
 #'
 #' @import stats
 #'
@@ -120,7 +124,7 @@
 #' }
 #'
 #' @export
-#' @importFrom foreach %dopar%
+#' @importFrom doRNG %dorng%
 #'
 #' @seealso  \code{\link{qut.MC}}
 #'
@@ -200,40 +204,67 @@ lass0 <- function(X, y, tau, alpha, q = nrow(X), M = 30, sigma = NULL,
     ## thresholding:
     if (missing(tau)) {
         if (is.null(qut.MC.output)) {
-            print("MC simulations for QUT estimation")
+            print("MC simulation for QUT estimation")
             qut.MC.output <- qut.MC(X = X, q = q, M = M, alpha = alpha, sigma = sigma,
                           intercept = intercept, standardizeX = FALSE, 
                           standardizeG = standardizeG, GEVapprox = GEVapprox,
                           parallel = parallel, ...)
+            quant.type <- ifelse(is.null(qut.MC.output$GEVfit) | class(qut.MC.output$GEVfit) != "gev.fit", 
+                   "empirical", "GEV")
             upperQuant <- qut.MC.output$upperQuant
-            if (is.null(sigma)) {
-                tau <- madGammas * upperQuant
-            } else {
+            if (upperQuant == Inf | !is.null(sigma)) {
                 tau <- upperQuant
+            } else {
+                tau <- madGammas * upperQuant
             }
         } else {
             if (GEVapprox) {
-                GEVpar <- qut.MC.output$GEVpar
-                if(is.character(GEVpar)) {
-                    warning("qut.MC.output contains no GEV parameters --> they are estimated from qut.MC.output$allMC")
+                if (is.null(qut.MC.output$GEVfit)) {
+                    warning("qut.MC.output contains no GEVfit --> run gev.fit on qut.MC.output$allMC")
                     print("fitting GEV distribution")
-                    GEVfit <- ismev::gev.fit(qut.MC.output$allMC)
-                    GEVpar <- GEVfit$mle
+                    GEVfit <- tryCatch(ismev::gev.fit(qut.MC.output$allMC),
+                                       error = function(cond) {
+                                           return("error")
+                                       })
+                    if (class(GEVfit) == "gev.fit") {
+                        quant.type <- "GEV"
+                        GEVpar <- GEVfit$mle
+                        if (GEVpar[3] == 0) {
+                            upperQuant <- GEVpar[1] - GEVpar[2] * log(-log(1-alpha))
+                        } else {
+                            upperQuant <- GEVpar[1] + GEVpar[2] / GEVpar[3] * (1/(-log(1-alpha))^GEVpar[3] - 1)
+                        }
+                    } else if (GEVfit == "error") {
+                        warning("error in gev.fit --> use empirical quantile")
+                        GEVapprox <- FALSE
+                    }
+                } else if (class(qut.MC.output$GEVfit) == "gev.fit") {
+                        warning("gev.fit in qut.MC.output produced an error --> use the empirical quantile")
+                        GEVapprox <- FALSE
+                } else if (qut.MC.output$GEVfit == "error") {
+                    quant.type <- "GEV"
+                    GEVpar <- qut.MC.output$GEVpar
+                    if (GEVpar[3] == 0) {
+                        upperQuant <- GEVpar[1] - GEVpar[2] * log(-log(1-alpha))
+                    } else {
+                        upperQuant <- GEVpar[1] + GEVpar[2] / GEVpar[3] * (1/(-log(1-alpha))^GEVpar[3] - 1)
+                    }
                 }
-                if (GEVpar[3] == 0) {
-                    upperQuant <- GEVpar[1] - GEVpar[2] * log(-log(1-alpha))
-                } else {
-                    upperQuant <- GEVpar[1] + GEVpar[2] / GEVpar[3] * (1/(-log(1-alpha))^GEVpar[3] - 1)
-                }
-            } else {
+            } 
+            
+            if (!GEVapprox) {
+                quant.type <- "empirical"
                 upperQuant <- quantile(qut.MC.output$allMC, 1-alpha)
             }
-            if (is.null(sigma)) {
-                tau <- madGammas * upperQuant
-            } else {
+            
+            if (upperQuant == Inf | !is.null(sigma)) {
                 tau <- upperQuant
+            } else {
+                tau <- madGammas * upperQuant
             }
         }
+    } else {
+        quant.type <- NULL # tau given
     }
     
     betahat[abs(betahat) <= tau] <- 0
@@ -269,6 +300,7 @@ lass0 <- function(X, y, tau, alpha, q = nrow(X), M = 30, sigma = NULL,
     out$madGammas <- madGammas
     out$sdsX <- sdsX
     out$qut.MC.output <- qut.MC.output
+    out$quant.type <- quant.type
     out$call <- match.call()
     class(out) <- "lass0"
     out

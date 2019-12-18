@@ -14,7 +14,7 @@ MextBP <- function(X, y, q = ncol(X), M = 30, meancenterG, standardizeG,
     p <- ncol(X)
     if (is.null(q)) q <- n
     if (parallel) {
-        BPsols <- foreach::foreach(m = 1:M, .combine = "cbind", .packages = "lpSolve") %dopar% {
+        BPsols <- foreach::foreach(m = 1:M, .combine = "cbind", .packages = "lpSolve") %dorng% {
             G <- matrix(rnorm(n*q), n, q)
             if (meancenterG) G <- t(t(G) - colMeans(G))
             if (is.numeric(standardizeG)) {

@@ -40,12 +40,18 @@
 #' @param parallel if \code{TRUE}, use parallel \code{foreach} to perform the
 #'   Monte Carlo simulation. Must register parallel beforehand, e.g. with
 #'   \code{doParallel}. Default is \code{FALSE}.
+#' @param var.subset subset of variables for which QUT is computed (i.e. we will
+#' compute the parameter value for which P(betahat[var.subset]) = 0) = 1-alpha
+#' when beta = 0.
 #'
 #' @return An object of class \code{"qut.MC"}, which is a list with the
 #'   following components: \item{allMC}{all \code{MCrep} realizations of the
 #'   null thresholding statistic of interest (pivotized if \code{sigma =
 #'   NULL}).} \item{GEVpar}{MLE estimates of the GEV distribution parameters
-#'   (\code{NULL} if \code{GEVapprox} was set to \code{FALSE}).}
+#'   (\code{NULL} if \code{GEVapprox} was set to \code{FALSE}).} \item{GEVfit}{
+#'   set to NULL is GEVapprox is FALSE. If GEVapprox is TRUE, GEVfit is 
+#'   either the result of the gev.fit function, or the character string "error" 
+#'   if gev.fit produced an error.}
 #'   \item{upperQuant}{upper alpha-quantile of the null thresholding statistis
 #'   (either the empirical quantile, or the quantile of the fitted GEV
 #'   distribution).} \item{call}{matched call.} \item{lass0settings}{a list
@@ -57,7 +63,7 @@
 #'
 #' @export
 #' @import stats
-#' @importFrom foreach %dopar%
+#' @importFrom doRNG %dorng%
 #'
 #' @examples
 #' ### Fast toy example with 5x10 input matrix and a small number (MCrep = 50)
@@ -114,7 +120,8 @@
 
 qut.MC <- function(X, q = nrow(X), M = 30, alpha = NULL, sigma = NULL,
                    intercept = TRUE, standardizeX = TRUE, standardizeG = NULL,
-                   MCrep = 1.e2, GEVapprox = TRUE, parallel = FALSE) {
+                   MCrep = 1.e2, GEVapprox = TRUE, parallel = FALSE,
+                   var.subset = 1:ncol(X)) {
     
     ## check for some errors / warnings in the arguments
     if (M < 1) {
@@ -136,33 +143,43 @@ qut.MC <- function(X, q = nrow(X), M = 30, alpha = NULL, sigma = NULL,
     
     ## Monte Carlo simulation:
     if (parallel) {
-        print("foreach loop starts")
-        allMC <- foreach::foreach(r = 1:MCrep, .combine = "c", .packages = "lpSolve") %dopar% {
-            print(paste0("MC rep", r))
+       #print("foreach loop starts")
+        allMC <- foreach::foreach(r = 1:MCrep, .combine = "c", .packages = "lpSolve") %dorng% {
+            #print(paste0("MC rep", r))
             eps <- rnorm(n)
             if (intercept) eps <- eps - mean(eps)
             extBP <- MextBP(X = X, y = eps, q = q, M = M,
                             meancenterG = intercept, standardizeG = standardizeG,
                             parallel = FALSE, returnGammas = is.null(sigma))
             if (is.null(sigma)){
-                max(abs(extBP$medBeta)) / extBP$madGammas
-            }else{
-                sigma * max(abs(extBP$medBeta))
+                if (is.na(extBP$madGammas)) extBP$madGammas <- 0 # occurs if all gammas are zero
+                if( max(abs(extBP$medBeta[var.subset])) == 0) {
+                    0
+                } else {
+                    max(abs(extBP$medBeta[var.subset])) / extBP$madGammas 
+                }
+            } else {
+                sigma * max(abs(extBP$medBeta[var.subset]))
             }
         }
     } else {
         allMC <- numeric(MCrep)
         for (r in 1:MCrep) {
-            print(paste0("MC rep", r))
+            #print(paste0("MC rep", r))
             eps <- rnorm(n)
             if (intercept) eps <- eps - mean(eps)
             extBP <- MextBP(X = X, y = eps, q = q, M = M,
                             meancenterG = intercept, standardizeG = standardizeG,
                             parallel = FALSE, returnGammas = is.null(sigma))
             if (is.null(sigma)) {
-                allMC[r] <- max(abs(extBP$medBeta)) / extBP$madGammas
+                if (is.na(extBP$madGammas)) extBP$madGammas <- 0 # occurs if all gammas are zero
+                if( max(abs(extBP$medBeta[var.subset])) == 0) {
+                    allMC[r] <- 0
+                } else {
+                    allMC[r] <- max(abs(extBP$medBeta[var.subset])) / extBP$madGammas 
+                }
             } else {
-                allMC[r] <- sigma * max(abs(extBP$medBeta))
+                allMC[r] <- sigma * max(abs(extBP$medBeta[var.subset]))
             }
         }
     }
@@ -170,19 +187,34 @@ qut.MC <- function(X, q = nrow(X), M = 30, alpha = NULL, sigma = NULL,
     ## if approximation by GEV distribution:
     if (GEVapprox) {
         print("fitting GEV distribution")
-        GEVfit <- ismev::gev.fit(allMC)
-        GEVpar <- GEVfit$mle
-        if (!is.null(alpha)) {
-            if (GEVpar[3] == 0) {
-                upperQuant <- GEVpar[1] - GEVpar[2] * log(-log(1-alpha))
+        GEVfit <- tryCatch(ismev::gev.fit(allMC),
+                                error = function(cond) {
+                                    return("error")
+                                })
+        if (class(GEVfit) == "gev.fit") {
+            GEVpar <- GEVfit$mle
+            if (!is.null(alpha)) {
+                if (GEVpar[3] == 0) {
+                    upperQuant <- GEVpar[1] - GEVpar[2] * log(-log(1-alpha))
+                } else {
+                    upperQuant <- GEVpar[1] + GEVpar[2] / GEVpar[3] * (1/(-log(1-alpha))^GEVpar[3] - 1)
+                }
             } else {
-                upperQuant <- GEVpar[1] + GEVpar[2] / GEVpar[3] * (1/(-log(1-alpha))^GEVpar[3] - 1)
+                upperQuant <- NULL
             }
-        } else {
-            upperQuant <- NULL
+        } else if (GEVfit == "error") {
+            warning("error in gev.fit --> use empirical quantile")
+            if (!is.null(alpha)) {
+                upperQuant <- quantile(allMC, 1-alpha)
+                GEVpar <- NULL
+            } else {
+                upperQuant <- NULL
+                GEVpar <- NULL
+            }
         }
     } else {
-        GEVpar <- "GEV parameters were not estimated"
+        GEVfit <- NULL
+        GEVpar <- NULL
         if (!is.null(alpha)) {
             upperQuant <- quantile(allMC, 1-alpha)
         } else {
@@ -194,6 +226,7 @@ qut.MC <- function(X, q = nrow(X), M = 30, alpha = NULL, sigma = NULL,
     out <- list()
     out$allMC <- allMC
     out$GEVpar <- GEVpar
+    out$GEVfit <- GEVfit
     out$upperQuant <- upperQuant
     out$call <- match.call()
     out$lass0settings <- lass0settings 

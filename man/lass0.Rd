@@ -85,7 +85,11 @@ An object of class \code{"lass0"}. It is a list containing the
   deviations of all columns of \code{X}. Can be used to transform
   \code{Betas} to the original scale doing \code{Betas / sdsX}.}
   \item{qut.MC.output}{either the list returned by \code{qut.MC}, or a character string
-  explaining why \code{qut.MC} was not called.} \item{call}{matched call.}
+  explaining why \code{qut.MC} was not called.} \item{quant.type}{if tau is NULL, 
+  indicates the type of quantile used: "GEV" or "empirical" 
+  (even when GEVapprox = TRUE, the empirical quantile is used when gev.fit 
+  returns an error)} 
+  \item{call}{matched call.}
 }
 \description{
 Fits a (possibly high-dimensional) linear model with Lasso-Zero. Lasso-Zero
